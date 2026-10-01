@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>即時氣象與環境資訊看板</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Google Fonts Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    /* 自訂平滑載入動畫 */
+    @keyframes pulse-slow {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .skeleton-box {
+      animation: pulse-slow 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-cyan-500 selection:text-white">
+
+  <!-- 頁首與導覽 -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <i data-lucide="cloud-sun" class="w-6 h-6 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-base sm:text-lg font-bold leading-tight tracking-tight text-white flex items-center gap-2">
+            即時氣象與環境資訊看板
+            <span class="text-[11px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full hidden sm:inline-block">CORS-Free API</span>
+          </h1>
+          <p class="text-xs text-slate-400 hidden xs:block">高可用度開放資料・防禦型前端架構</p>
+        </div>
+      </div>
+
+      <!-- 右側控制組件 -->
+      <div class="flex items-center gap-3">
+        <!-- 城市切換選單 -->
+        <div class="relative">
+          <select id="city-selector" class="appearance-none bg-slate-800 border border-slate-700 hover:border-slate-600 rounded-lg pl-3 pr-8 py-1.5 text-xs sm:text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-colors cursor-pointer">
+            <option value="taipei">台北市 (Taipei)</option>
+            <option value="new_taipei">新北市 (New Taipei)</option>
+            <option value="taichung">台中市 (Taichung)</option>
+            <option value="kaohsiung">高雄市 (Kaohsiung)</option>
+            <option value="hualien">花蓮縣 (Hualien)</option>
+            <option value="tokyo">東京 (Tokyo)</option>
+            <option value="london">倫敦 (London)</option>
+          </select>
+          <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
+            <i data-lucide="chevron-down" class="w-4 h-4"></i>
+          </div>
+        </div>
+
+        <!-- 重新整理按鈕 -->
+        <button id="btn-refresh" title="手動重新整理" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition-all duration-200 flex items-center justify-center active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+          <i id="refresh-icon" data-lucide="rotate-cw" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主內容區塊 -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6">
+
+    <!-- 頂部狀態列與網路偵測通知條 -->
+    <div id="offline-banner" class="hidden p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs sm:text-sm flex items-center gap-2">
+      <i data-lucide="wifi-off" class="w-4 h-4 shrink-0"></i>
+      <span>偵測到瀏覽器處於離線狀態，若無法取得新資料將嘗試讀取本地快照。</span>
+    </div>
+
+    <!-- 狀態區塊 1: 錯誤提示 (預設隱藏) -->
+    <section id="state-error" class="hidden rounded-2xl bg-rose-950/20 border border-rose-800/40 p-6 sm:p-8 text-center flex flex-col items-center justify-center my-6">
+      <div class="w-14 h-14 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mb-4 text-rose-400">
+        <i data-lucide="alert-triangle" class="w-7 h-7"></i>
+      </div>
+      <h2 class="text-lg font-semibold text-rose-300 mb-1">資料取得失敗</h2>
+      <p id="error-message-text" class="text-sm text-slate-400 max-w-lg mb-6 break-words">伺服器回應逾時或網路連線異常，請確認網路環境後重試。</p>
+      
+      <div class="flex flex-wrap items-center justify-center gap-3">
+        <button id="btn-retry" class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition-colors flex items-center gap-2 shadow-lg shadow-cyan-600/20">
+          <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+          重新發送請求
+        </button>
+        <button id="btn-load-fallback" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium border border-slate-700 transition-colors">
+          載入展示用備援快照
+        </button>
+      </div>
+    </section>
+
+    <!-- 狀態區塊 2: 載入中骨架屏 (Loading Skeleton) -->
+    <section id="state-loading" class="flex flex-col gap-6">
+      <!-- 英雄大卡片骨架 -->
+      <div class="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 sm:p-8 flex flex-col md:flex-row gap-6 justify-between">
+        <div class="space-y-4 w-full md:w-1/2">
+          <div class="h-6 w-36 bg-slate-800 rounded skeleton-box"></div>
+          <div class="h-14 w-48 bg-slate-800 rounded-xl skeleton-box"></div>
+          <div class="h-4 w-64 bg-slate-800 rounded skeleton-box"></div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full md:w-1/2">
+          <div class="h-24 bg-slate-800/80 rounded-xl skeleton-box"></div>
+          <div class="h-24 bg-slate-800/80 rounded-xl skeleton-box"></div>
+          <div class="h-24 bg-slate-800/80 rounded-xl skeleton-box"></div>
+          <div class="h-24 bg-slate-800/80 rounded-xl skeleton-box"></div>
+        </div>
+      </div>
+
+      <!-- 列表/預報骨架 -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div class="h-44 bg-slate-900/40 rounded-xl border border-slate-800 skeleton-box"></div>
+        <div class="h-44 bg-slate-900/40 rounded-xl border border-slate-800 skeleton-box"></div>
+        <div class="h-44 bg-slate-900/40 rounded-xl border border-slate-800 skeleton-box"></div>
+        <div class="h-44 bg-slate-900/40 rounded-xl border border-slate-800 skeleton-box"></div>
+        <div class="h-44 bg-slate-900/40 rounded-xl border border-slate-800 skeleton-box"></div>
+      </div>
+    </section>
+
+    <!-- 狀態區塊 3: 成功呈現資料 (Success Content) -->
+    <section id="state-success" class="hidden flex flex-col gap-6">
+
+      <!-- 頂部即時觀測主儀表板 -->
+      <div class="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900/90 to-slate-950 p-6 sm:p-8 shadow-xl relative overflow-hidden">
+        <!-- 背景流動漸層光斑 -->
+        <div class="absolute -right-20 -top-20 w-72 h-72 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div class="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <!-- 核心溫度與城市 -->
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span id="badge-city-name" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">台北市</span>
+              <span id="current-weather-desc" class="text-xs text-slate-400 font-medium">晴朗無雲</span>
+              <span id="fallback-indicator" class="hidden px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">離線快照</span>
+            </div>
+            
+            <div class="flex items-baseline gap-4">
+              <div id="current-temp" class="text-5xl sm:text-6xl font-extrabold tracking-tight text-white font-mono">--°C</div>
+              <div class="flex flex-col text-xs text-slate-400">
+                <span>體感溫度 <span id="current-apparent-temp" class="text-slate-200 font-medium font-mono">--°C</span></span>
+                <span>當日最高/最低 <span id="today-high-low" class="text-slate-200 font-medium font-mono">--° / --°</span></span>
+              </div>
+            </div>
+            <p id="current-summary-phrase" class="text-xs text-slate-400 mt-2">即時大氣觀測數據由 Open-Meteo 數值模式計算提供。</p>
+          </div>
+
+          <!-- 即時關鍵指標 4 格小卡片 -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full lg:w-auto">
+            <div class="bg-slate-800/50 border border-slate-800 rounded-xl p-3 flex flex-col justify-center">
+              <span class="text-xs text-slate-400 flex items-center gap-1.5 mb-1">
+                <i data-lucide="droplets" class="w-3.5 h-3.5 text-blue-400"></i> 相對濕度
+              </span>
+              <span id="stat-humidity" class="text-lg font-bold text-slate-100 font-mono">--%</span>
+            </div>
+
+            <div class="bg-slate-800/50 border border-slate-800 rounded-xl p-3 flex flex-col justify-center">
+              <span class="text-xs text-slate-400 flex items-center gap-1.5 mb-1">
+                <i data-lucide="wind" class="w-3.5 h-3.5 text-cyan-400"></i> 風速
+              </span>
+              <span id="stat-wind" class="text-lg font-bold text-slate-100 font-mono">-- km/h</span>
+            </div>
+
+            <div class="bg-slate-800/50 border border-slate-800 rounded-xl p-3 flex flex-col justify-center">
+              <span class="text-xs text-slate-400 flex items-center gap-1.5 mb-1">
+                <i data-lucide="sun-medium" class="w-3.5 h-3.5 text-amber-400"></i> 紫外線指數
+              </span>
+              <span id="stat-uv" class="text-lg font-bold text-slate-100 font-mono">--</span>
+            </div>
+
+            <div class="bg-slate-800/50 border border-slate-800 rounded-xl p-3 flex flex-col justify-center">
+              <span class="text-xs text-slate-400 flex items-center gap-1.5 mb-1">
+                <i data-lucide="cloud-rain" class="w-3.5 h-3.5 text-indigo-400"></i> 降雨機率
+              </span>
+              <span id="stat-precipitation" class="text-lg font-bold text-slate-100 font-mono">--%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 未來 5 天逐日天氣預報列表 -->
+      <div>
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <i data-lucide="calendar" class="w-4 h-4 text-cyan-400"></i>
+            未來 5 天氣候趨勢
+          </h3>
+          <span class="text-xs text-slate-400">數值預報 (每日摘要)</span>
+        </div>
+
+        <!-- 每日卡片容器 -->
+        <div id="forecast-cards-container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
+          <!-- 卡片將由 JavaScript 防禦性渲染 -->
+        </div>
+      </div>
+
+      <!-- 今日 24 小時每小時溫度簡約長條圖表 (Chart/Visual representation) -->
+      <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <i data-lucide="trending-up" class="w-4 h-4 text-cyan-400"></i>
+            今日逐時氣溫走勢 (24H)
+          </h3>
+          <span class="text-xs text-slate-400 font-mono">每 3 小時觀測區間</span>
+        </div>
+
+        <!-- 水平直方統計圖 -->
+        <div id="hourly-chart-container" class="grid grid-cols-8 gap-2 h-36 items-end pt-6 pb-2 border-b border-slate-800">
+          <!-- 直條圖柱由 JavaScript 依據溫度比例安全繪製 -->
+        </div>
+        <div id="hourly-labels-container" class="grid grid-cols-8 gap-2 pt-2 text-center text-[11px] text-slate-400 font-mono">
+          <!-- 時間標記 -->
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- 頁尾：明確標示開放資料來源、更新時間與健康指標 -->
+  <footer class="border-t border-slate-850 bg-slate-900/40 text-xs text-slate-400 py-6 mt-auto">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
+      
+      <!-- 開放資料來源宣告 -->
+      <div class="flex items-center gap-2">
+        <i data-lucide="database" class="w-4 h-4 text-slate-400"></i>
+        <span>資料來源：
+          <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer" class="text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+            Open-Meteo 氣象開放資料 API
+          </a>
+          （開放授權 CC BY 4.0）
+        </span>
+      </div>
+
+      <!-- 最後更新與連線健康度 -->
+      <div class="flex flex-wrap items-center gap-4 text-slate-400">
+        <div class="flex items-center gap-1.5">
+          <span id="health-indicator" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span id="health-text">API 連線正常</span>
+        </div>
+        <div class="text-slate-400 font-mono">
+          最後更新：<span id="last-updated-time">--:--:--</span>
+        </div>
+      </div>
+
+    </div>
+  </footer>
+
+  <script>
+    /**
+     * 即時氣象與環境資訊看板 - 防禦型前端控制模組
+     * 設計理念：
+     * 1. 嚴格邊界檢查：AbortController 超時限制、HTTP 與 Content-Type 驗證。
+     * 2. 安全解構與 Fallback 策略：絕不信任外部回傳必定具備特定 Schema。
+     * 3. DOM 安全防護：使用 textContent 與 createElement 杜絕 XSS。
+     */
+
+    // 城市經緯度設定（避免額外地理編碼 API 造成相依脆弱點）
+    const CITY_COORDINATES = {
+      taipei: { name: '台北市', lat: 25.0478, lon: 121.5319 },
+      new_taipei: { name: '新北市', lat: 25.0169, lon: 121.4627 },
+      taichung: { name: '台中市', lat: 24.1477, lon: 120.6736 },
+      kaohsiung: { name: '高雄市', lat: 22.6273, lon: 120.3014 },
+      hualien: { name: '花蓮縣', lat: 23.9871, lon: 121.6015 },
+      tokyo: { name: '東京', lat: 35.6895, lon: 139.6917 },
+      london: { name: '倫敦', lat: 51.5074, lon: -0.1278 }
+    };
+
+    // WMO 天氣代碼對應表 (保護未知代碼預設為陰天/多雲)
+    const WMO_WEATHER_MAP = {
+      0: { label: '晴天', icon: 'sun', color: 'text-amber-400' },
+      1: { label: '晴間多雲', icon: 'cloud-sun', color: 'text-amber-300' },
+      2: { label: '局部多雲', icon: 'cloud', color: 'text-slate-300' },
+      3: { label: '陰天', icon: 'cloudy', color: 'text-slate-400' },
+      45: { label: '濃霧', icon: 'cloud-fog', color: 'text-slate-400' },
+      48: { label: '白霜霧', icon: 'cloud-fog', color: 'text-slate-400' },
+      51: { label: '零星細雨', icon: 'cloud-drizzle', color: 'text-cyan-300' },
+      53: { label: '毛毛雨', icon: 'cloud-drizzle', color: 'text-cyan-400' },
+      55: { label: '密集細雨', icon: 'cloud-rain', color: 'text-cyan-400' },
+      61: { label: '微雨', icon: 'cloud-rain', color: 'text-blue-400' },
+      63: { label: '中雨', icon: 'cloud-rain', color: 'text-blue-500' },
+      65: { label: '強降雨', icon: 'cloud-heavy-rain', color: 'text-blue-600' },
+      71: { label: '降雪', icon: 'cloud-snow', color: 'text-sky-200' },
+      80: { label: '陣雨', icon: 'cloud-rain', color: 'text-cyan-400' },
+      95: { label: '雷雨', icon: 'cloud-lightning', color: 'text-yellow-400' },
+      default: { label: '多雲', icon: 'cloud', color: 'text-slate-300' }
+    };
+
+    // 離線備援靜態快照資料 (當外部網路斷開、超時或 CORS 出現不可測狀況時安全啟動)
+    const STATIC_FALLBACK_PAYLOAD = {
+      isFallback: true,
+      current: {
+        temperature_2m: 24.2,
+        relative_humidity_2m: 68,
+        apparent_temperature: 25.1,
+        precipitation_probability: 20,
+        weather_code: 1,
+        wind_speed_10m: 14.2,
+        uv_index: 5.4
+      },
+      daily: {
+        time: ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05'],
+        weather_code: [1, 2, 61, 3, 0],
+        temperature_2m_max: [28.5, 27.2, 24.0, 26.1, 29.0],
+        temperature_2m_min: [22.1, 21.5, 20.0, 21.0, 22.8],
+        precipitation_probability_max: [10, 30, 85, 40, 5]
+      },
+      hourly: {
+        temperature_2m: [22, 21, 22, 24, 27, 28, 26, 23]
+      }
+    };
+
+    // UI 狀態管理
+    const UI_STATE = {
+      currentCity: 'taipei',
+      isLoading: false,
+      timeoutMs: 8000 // 8 秒超時防護
+    };
+
+    // DOM 元素引用快取
+    const elements = {
+      citySelector: document.getElementById('city-selector'),
+      btnRefresh: document.getElementById('btn-refresh'),
+      refreshIcon: document.getElementById('refresh-icon'),
+      stateLoading: document.getElementById('state-loading'),
+      stateError: document.getElementById('state-error'),
+      stateSuccess: document.getElementById('state-success'),
+      errorMessageText: document.getElementById('error-message-text'),
+      btnRetry: document.getElementById('btn-retry'),
+      btnLoadFallback: document.getElementById('btn-load-fallback'),
+      badgeCityName: document.getElementById('badge-city-name'),
+      currentTemp: document.getElementById('current-temp'),
+      currentWeatherDesc: document.getElementById('current-weather-desc'),
+      currentApparentTemp: document.getElementById('current-apparent-temp'),
+      todayHighLow: document.getElementById('today-high-low'),
+      statHumidity: document.getElementById('stat-humidity'),
+      statWind: document.getElementById('stat-wind'),
+      statUv: document.getElementById('stat-uv'),
+      statPrecipitation: document.getElementById('stat-precipitation'),
+      forecastCardsContainer: document.getElementById('forecast-cards-container'),
+      hourlyChartContainer: document.getElementById('hourly-chart-container'),
+      hourlyLabelsContainer: document.getElementById('hourly-labels-container'),
+      lastUpdatedTime: document.getElementById('last-updated-time'),
+      healthIndicator: document.getElementById('health-indicator'),
+      healthText: document.getElementById('health-text'),
+      fallbackIndicator: document.getElementById('fallback-indicator'),
+      offlineBanner: document.getElementById('offline-banner')
+    };
+
+    /**
+     * 封裝具備 AbortController 超時防護的 Fetch
+     */
+    async function fetchWithTimeout(url, timeoutMs = 8000) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          signal: controller.signal,
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+        return response;
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          throw new Error(`請求超時（超過 ${timeoutMs / 1000} 秒未回應），遠端伺服器可能過載或網路受阻。`);
+        }
+        throw new Error(err.message || '網路連線失敗，請檢查跨域權限或裝置連線狀態。');
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    /**
+     * 資料清洗與防禦性驗證 (Sanitize & Validate)
+     */
+    function sanitizeWeatherData(raw) {
+      if (!raw || typeof raw !== 'object') {
+        throw new Error('伺服器回傳空物件或無效資料型態。');
+      }
+
+      // 檢查是否包含當前觀測核心
+      const current = raw.current ?? raw.current_weather ?? {};
+      const daily = raw.daily ?? {};
+      const hourly = raw.hourly ?? {};
+
+      // 取得溫度值，保證為合法數值
+      const tempVal = Number(current.temperature_2m ?? current.temperature);
+      const safeTemp = Number.isFinite(tempVal) ? Math.round(tempVal * 10) / 10 : '--';
+
+      const apparentTempVal = Number(current.apparent_temperature);
+      const safeApparent = Number.isFinite(apparentTempVal) ? `${Math.round(apparentTempVal)}°C` : `${safeTemp}°C`;
+
+      const humidityVal = Number(current.relative_humidity_2m);
+      const safeHumidity = Number.isFinite(humidityVal) ? `${humidityVal}%` : '--%';
+
+      const windVal = Number(current.wind_speed_10m ?? current.windspeed);
+      const safeWind = Number.isFinite(windVal) ? `${Math.round(windVal)} km/h` : '--';
+
+      const uvVal = Number(current.uv_index);
+      const safeUv = Number.isFinite(uvVal) ? uvVal.toFixed(1) : '無';
+
+      const precipVal = Number(current.precipitation_probability);
+      const safePrecip = Number.isFinite(precipVal) ? `${precipVal}%` : '0%';
+
+      const weatherCode = current.weather_code ?? current.weathercode ?? 2;
+
+      // 驗證每日預報陣列
+      const dates = Array.isArray(daily.time) ? daily.time : [];
+      const codes = Array.isArray(daily.weather_code) ? daily.weather_code : [];
+      const maxTemps = Array.isArray(daily.temperature_2m_max) ? daily.temperature_2m_max : [];
+      const minTemps = Array.isArray(daily.temperature_2m_min) ? daily.temperature_2m_min : [];
+      const precipMax = Array.isArray(daily.precipitation_probability_max) ? daily.precipitation_probability_max : [];
+
+      const safeDailyList = [];
+      const loopLen = Math.min(dates.length, 5); // 取 5 天
+
+      for (let i = 0; i < loopLen; i++) {
+        safeDailyList.push({
+          date: dates[i] || `第 ${i + 1} 天`,
+          code: codes[i] ?? 2,
+          max: Number.isFinite(Number(maxTemps[i])) ? Math.round(maxTemps[i]) : '--',
+          min: Number.isFinite(Number(minTemps[i])) ? Math.round(minTemps[i]) : '--',
+          pop: Number.isFinite(Number(precipMax[i])) ? Math.round(precipMax[i]) : 0
+        });
+      }
+
+      // 今日高低溫安全取出
+      const todayMax = safeDailyList[0]?.max ?? '--';
+      const todayMin = safeDailyList[0]?.min ?? '--';
+
+      // 逐時走勢 (取 8 個時間點: 00, 03, 06, 09, 12, 15, 18, 21)
+      const hourlyTemps = Array.isArray(hourly.temperature_2m) ? hourly.temperature_2m : [];
+      const sampledHourly = [];
+      for (let i = 0; i < 24 && i < hourlyTemps.length; i += 3) {
+        sampledHourly.push(Number.isFinite(Number(hourlyTemps[i])) ? Math.round(hourlyTemps[i]) : 25);
+      }
+
+      return {
+        isFallback: Boolean(raw.isFallback),
+        current: {
+          temp: safeTemp,
+          apparent: safeApparent,
+          humidity: safeHumidity,
+          wind: safeWind,
+          uv: safeUv,
+          precipitation: safePrecip,
+          weatherCode: weatherCode,
+          todayHighLow: `${todayMax}° / ${todayMin}°`
+        },
+        daily: safeDailyList,
+        hourly: sampledHourly.length >= 8 ? sampledHourly : [23, 22, 22, 25, 28, 28, 26, 24]
+      };
+    }
+
+    /**
+     * 安全更新 UI DOM 內容
+     */
+    function renderWeatherDashboard(data, cityName) {
+      // 1. 基本資訊文字更新 (使用 textContent 防注入)
+      elements.badgeCityName.textContent = cityName;
+      elements.currentTemp.textContent = `${data.current.temp}°C`;
+      elements.currentApparentTemp.textContent = data.current.apparent;
+      elements.todayHighLow.textContent = data.current.todayHighLow;
+
+      const weatherMeta = WMO_WEATHER_MAP[data.current.weatherCode] || WMO_WEATHER_MAP.default;
+      elements.currentWeatherDesc.textContent = weatherMeta.label;
+
+      elements.statHumidity.textContent = data.current.humidity;
+      elements.statWind.textContent = data.current.wind;
+      elements.statUv.textContent = data.current.uv;
+      elements.statPrecipitation.textContent = data.current.precipitation;
+
+      // 備援指標標記
+      if (data.isFallback) {
+        elements.fallbackIndicator.classList.remove('hidden');
+        elements.healthIndicator.className = 'w-2 h-2 rounded-full bg-amber-400';
+        elements.healthText.textContent = 'API 降級 (使用備援資料)';
+      } else {
+        elements.fallbackIndicator.classList.add('hidden');
+        elements.healthIndicator.className = 'w-2 h-2 rounded-full bg-emerald-400';
+        elements.healthText.textContent = 'API 連線正常';
+      }
+
+      // 2. 渲染未來 5 天預報卡片
+      elements.forecastCardsContainer.innerHTML = '';
+      data.daily.forEach((day, index) => {
+        const card = document.createElement('div');
+        card.className = 'bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 rounded-xl p-4 transition-all duration-200 flex flex-col justify-between';
+
+        const dayMeta = WMO_WEATHER_MAP[day.code] || WMO_WEATHER_MAP.default;
+        
+        // 格式化日期：轉換星期幾
+        let dateLabel = day.date;
+        try {
+          const d = new Date(day.date);
+          const daysOfWeek = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+          dateLabel = index === 0 ? '今天' : `${d.getMonth() + 1}/${d.getDate()} (${daysOfWeek[d.getDay()]})`;
+        } catch (e) {
+          dateLabel = day.date;
+        }
+
+        // 建立內部 DOM 節點
+        card.innerHTML = `
+          <div>
+            <div class="flex items-center justify-between text-xs text-slate-400 mb-2">
+              <span class="font-medium text-slate-300">${dateLabel}</span>
+              <span class="flex items-center gap-1 text-[11px] text-cyan-400">
+                <i data-lucide="droplet" class="w-3 h-3"></i> ${day.pop}%
+              </span>
+            </div>
+            <div class="flex items-center gap-3 my-2">
+              <i data-lucide="${dayMeta.icon}" class="w-7 h-7 ${dayMeta.color}"></i>
+              <span class="text-sm font-semibold text-slate-200">${dayMeta.label}</span>
+            </div>
+          </div>
+          <div class="pt-3 border-t border-slate-800/80 flex items-center justify-between font-mono text-xs">
+            <span class="text-slate-400">氣溫</span>
+            <span class="text-slate-200 font-medium">${day.min}° ~ ${day.max}°</span>
+          </div>
+        `;
+        elements.forecastCardsContainer.appendChild(card);
+      });
+
+      // 3. 渲染逐時長條圖 (24H 分 8 個 3hr 區間)
+      elements.hourlyChartContainer.innerHTML = '';
+      elements.hourlyLabelsContainer.innerHTML = '';
+
+      const minTemp = Math.min(...data.hourly);
+      const maxTemp = Math.max(...data.hourly);
+      const range = Math.max(maxTemp - minTemp, 1);
+      const timeLabels = ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00'];
+
+      data.hourly.forEach((temp, i) => {
+        // 計算高度百分比 (35% ~ 95% 之間)
+        const heightPct = 35 + ((temp - minTemp) / range) * 55;
+
+        // 直條
+        const barWrapper = document.createElement('div');
+        barWrapper.className = 'flex flex-col items-center justify-end h-full gap-1 group relative';
+
+        const tempTag = document.createElement('span');
+        tempTag.className = 'text-[10px] text-cyan-300 font-mono font-medium group-hover:scale-110 transition-transform';
+        tempTag.textContent = `${temp}°`;
+
+        const bar = document.createElement('div');
+        bar.className = 'w-full max-w-[28px] bg-gradient-to-t from-cyan-900/60 to-cyan-500 rounded-t-md hover:brightness-125 transition-all duration-300';
+        bar.style.height = `${heightPct}%`;
+
+        barWrapper.appendChild(tempTag);
+        barWrapper.appendChild(bar);
+        elements.hourlyChartContainer.appendChild(barWrapper);
+
+        // 底部時間標籤
+        const label = document.createElement('span');
+        label.textContent = timeLabels[i] || '--';
+        elements.hourlyLabelsContainer.appendChild(label);
+      });
+
+      // 重新啟用 Lucide 圖示
+      lucide.createIcons();
+
+      // 更新時間戳記
+      const now = new Date();
+      elements.lastUpdatedTime.textContent = now.toLocaleTimeString('zh-TW', { hour12: false });
+    }
+
+    /**
+     * UI 狀態機切換
+     */
+    function setUIState(state, message = '') {
+      if (state === 'loading') {
+        UI_STATE.isLoading = true;
+        elements.btnRefresh.disabled = true;
+        elements.refreshIcon.classList.add('animate-spin');
+        elements.stateLoading.classList.remove('hidden');
+        elements.stateError.classList.add('hidden');
+        elements.stateSuccess.classList.add('hidden');
+      } else if (state === 'success') {
+        UI_STATE.isLoading = false;
+        elements.btnRefresh.disabled = false;
+        elements.refreshIcon.classList.remove('animate-spin');
+        elements.stateLoading.classList.add('hidden');
+        elements.stateError.classList.add('hidden');
+        elements.stateSuccess.classList.remove('hidden');
+      } else if (state === 'error') {
+        UI_STATE.isLoading = false;
+        elements.btnRefresh.disabled = false;
+        elements.refreshIcon.classList.remove('animate-spin');
+        elements.stateLoading.classList.add('hidden');
+        elements.stateError.classList.remove('hidden');
+        elements.stateSuccess.classList.add('hidden');
+        elements.errorMessageText.textContent = message || '發生未預期的連線或解析錯誤。';
+        elements.healthIndicator.className = 'w-2 h-2 rounded-full bg-rose-500';
+        elements.healthText.textContent = 'API 連線失敗';
+      }
+    }
+
+    /**
+     * 主載入流程：獲取 Open-Meteo 資料
+     */
+    async function loadWeatherData(cityKey = 'taipei') {
+      const city = CITY_COORDINATES[cityKey] || CITY_COORDINATES.taipei;
+      setUIState('loading');
+
+      // 組合 Open-Meteo REST API 參數（CORS 友好、零需 Token）
+      const params = new URLSearchParams({
+        latitude: city.lat,
+        longitude: city.lon,
+        current: 'temperature_2m,relative_humidity_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m,uv_index',
+        daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+        hourly: 'temperature_2m',
+        timezone: 'auto',
+        forecast_days: '5'
+      });
+
+      const apiUrl = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+
+      try {
+        const response = await fetchWithTimeout(apiUrl, UI_STATE.timeoutMs);
+
+        // 1. 檢查 HTTP 狀態碼
+        if (!response.ok) {
+          throw new Error(`遠端開放資料回傳 HTTP ${response.status} (${response.statusText || '伺服器異常'})`);
+        }
+
+        // 2. 驗證是否真為 JSON 格式（避免閘道 502 HTML）
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          throw new Error('伺服器回傳非 JSON 資料格式（可能是閘道錯誤頁面或維護通知）。');
+        }
+
+        const rawJson = await response.json();
+
+        // 3. 資料結構校驗與安全清洗
+        const cleanData = sanitizeWeatherData(rawJson);
+
+        // 4. 渲染至 DOM
+        renderWeatherDashboard(cleanData, city.name);
+        setUIState('success');
+
+      } catch (err) {
+        console.error('Fetch Weather Failed:', err);
+        setUIState('error', err.message);
+      }
+    }
+
+    /**
+     * 載入備援快照展示
+     */
+    function loadFallbackData() {
+      const city = CITY_COORDINATES[UI_STATE.currentCity] || CITY_COORDINATES.taipei;
+      const cleanData = sanitizeWeatherData(STATIC_FALLBACK_PAYLOAD);
+      renderWeatherDashboard(cleanData, `${city.name} (離線備援)`);
+      setUIState('success');
+    }
+
+    // 初始化事件監聽
+    function initEventListeners() {
+      // 城市切換
+      elements.citySelector.addEventListener('change', (e) => {
+        UI_STATE.currentCity = e.target.value;
+        loadWeatherData(UI_STATE.currentCity);
+      });
+
+      // 重新整理按鈕
+      elements.btnRefresh.addEventListener('click', () => {
+        if (!UI_STATE.isLoading) {
+          loadWeatherData(UI_STATE.currentCity);
+        }
+      });
+
+      // 錯誤頁重新整理按鈕
+      elements.btnRetry.addEventListener('click', () => {
+        loadWeatherData(UI_STATE.currentCity);
+      });
+
+      // 錯誤頁手動載入備援資料按鈕
+      elements.btnLoadFallback.addEventListener('click', () => {
+        loadFallbackData();
+      });
+
+      // 網路在線/離線狀態監控
+      window.addEventListener('online', () => {
+        elements.offlineBanner.classList.add('hidden');
+        loadWeatherData(UI_STATE.currentCity);
+      });
+
+      window.addEventListener('offline', () => {
+        elements.offlineBanner.classList.remove('hidden');
+      });
+
+      if (!navigator.onLine) {
+        elements.offlineBanner.classList.remove('hidden');
+      }
+    }
+
+    // 頁面載入完成後啟動
+    window.addEventListener('DOMContentLoaded', () => {
+      initEventListeners();
+      lucide.createIcons();
+      loadWeatherData(UI_STATE.currentCity);
+    });
+  </script>
+</body>
+</html>
